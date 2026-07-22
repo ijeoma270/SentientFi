@@ -82,8 +82,11 @@ describe.skip('API Health Check', () => {
 
 // ─── Portfolio Creation Tests ────────────────────────────────────────────────
 
-describe.skip('Portfolio Management - POST /api/portfolio', () => {
+describe('Portfolio Management - POST /api/portfolio', () => {
     it('should create a portfolio with valid input', async () => {
+        // userAddress deliberately not a real Stellar address here — the
+        // frontend sends a "demo-user" placeholder when no wallet is
+        // connected, and createPortfolioSchema doesn't require StrKey format.
         const testPayload = {
             userAddress: 'GTEST123456789ABCDEF0',
             allocations: { XLM: 60, USDC: 40 },
@@ -93,13 +96,12 @@ describe.skip('Portfolio Management - POST /api/portfolio', () => {
         const response = await request(app)
             .post('/api/portfolio')
             .send(testPayload)
-            .expect((res) => {
-                expect([200, 201]).toContain(res.status)
-            })
+            .expect(201)
 
-        expect(response.body.portfolioId).toBeDefined()
-        expect(response.body.status).toBe('created')
-        expect(response.body.mode).toBe('demo')
+        expect(response.body.success).toBe(true)
+        expect(response.body.portfolio.id).toBeDefined()
+        expect(response.body.portfolio.userAddress).toBe(testPayload.userAddress)
+        expect(response.body.portfolio.allocations).toEqual(testPayload.allocations)
     })
 
     it('should return 400 for missing required fields', async () => {
@@ -113,14 +115,15 @@ describe.skip('Portfolio Management - POST /api/portfolio', () => {
             .send(testPayload)
             .expect(400)
 
-        expect(response.body.error).toBeDefined()
-        expect(response.body.error).toContain('Missing required fields')
+        expect(response.body.error).toBe('Invalid request payload')
+        expect(response.body.details.some((d: any) => d.field === 'allocations')).toBe(true)
+        expect(response.body.details.some((d: any) => d.field === 'threshold')).toBe(true)
     })
 
     it('should return 400 if allocations do not sum to 100%', async () => {
         const testPayload = {
             userAddress: 'GTEST123456789ABCDEF1',
-            allocations: { XLM: 60, USDC: 30 }, 
+            allocations: { XLM: 60, USDC: 30 },
             threshold: 5
         }
 
@@ -129,14 +132,14 @@ describe.skip('Portfolio Management - POST /api/portfolio', () => {
             .send(testPayload)
             .expect(400)
 
-        expect(response.body.error).toContain('100%')
+        expect(response.body.details.some((d: any) => d.message.includes('100%'))).toBe(true)
     })
 
     it('should return 400 if threshold is out of range', async () => {
         const testPayload = {
             userAddress: 'GTEST123456789ABCDEF2',
             allocations: { XLM: 60, USDC: 40 },
-            threshold: 100 
+            threshold: 100
         }
 
         const response = await request(app)
@@ -144,13 +147,13 @@ describe.skip('Portfolio Management - POST /api/portfolio', () => {
             .send(testPayload)
             .expect(400)
 
-        expect(response.body.error).toContain('Threshold')
+        expect(response.body.details.some((d: any) => d.message.includes('Threshold'))).toBe(true)
     })
 
     it('should return 400 if asset allocation is invalid', async () => {
         const testPayload = {
             userAddress: 'GTEST123456789ABCDEF3',
-            allocations: { XLM: 120, USDC: -20 }, 
+            allocations: { XLM: 120, USDC: -20 },
             threshold: 5
         }
 
@@ -165,7 +168,7 @@ describe.skip('Portfolio Management - POST /api/portfolio', () => {
 
 // ─── Portfolio Retrieval Tests ───────────────────────────────────────────────
 
-describe.skip('Portfolio Management - GET /api/portfolio/:id', () => {
+describe('Portfolio Management - GET /api/portfolio/:id', () => {
     it('should return portfolio data for valid portfolio ID', async () => {
         // First create a portfolio
         const createPayload = {
@@ -177,42 +180,35 @@ describe.skip('Portfolio Management - GET /api/portfolio/:id', () => {
         const createResponse = await request(app)
             .post('/api/portfolio')
             .send(createPayload)
-            .expect((res) => {
-                expect([200, 201]).toContain(res.status)
-            })
+            .expect(201)
 
-        const portfolioId = createResponse.body.portfolioId
+        const portfolioId = createResponse.body.portfolio.id
         expect(portfolioId).toBeDefined()
 
         // Now fetch it
         const getResponse = await request(app)
             .get(`/api/portfolio/${portfolioId}`)
-            .expect((res) => {
-                expect([200, 201]).toContain(res.status)
-            })
+            .expect(200)
 
         expect(getResponse.body.portfolio).toBeDefined()
-        expect(getResponse.body.prices).toBeDefined()
-        expect(getResponse.body.mode).toBe('demo')
+        expect(getResponse.body.portfolio.id).toBe(portfolioId)
+        expect(Array.isArray(getResponse.body.portfolio.allocations)).toBe(true)
     })
 
-    it('should return 400 for missing portfolio ID', async () => {
-        const response = await request(app)
+    it('should return 404 for missing portfolio ID', async () => {
+        // Express doesn't match an empty :id segment, so this 404s at the
+        // router level rather than reaching the handler.
+        await request(app)
             .get('/api/portfolio/')
-            .expect((res) => {
-                // 404 or 400 depending on routing
-                expect([400, 404]).toContain(res.status)
-            })
+            .expect(404)
     })
 
     it('should handle non-existent portfolio gracefully', async () => {
         const response = await request(app)
             .get('/api/portfolio/nonexistent-id-xyz')
-            .expect((res) => {
-                expect([400, 404, 500]).toContain(res.status)
-            })
+            .expect(404)
 
-        expect(response.body.error || response.body.message).toBeDefined()
+        expect(response.body.error).toBe('Portfolio not found')
     })
 })
 
@@ -264,9 +260,13 @@ describe('Price Data - GET /api/prices', () => {
 
 // ─── Rebalancing Tests ──────────────────────────────────────────────────────
 
-describe.skip('Rebalancing - POST /api/portfolio/:id/rebalance', () => {
-    it('should handle rebalance request with validation', async () => {
-        // First create a portfolio
+describe('Rebalancing - POST /api/portfolio/:id/rebalance', () => {
+    it('should reject a rebalance immediately after creation (cooldown)', async () => {
+        // createPortfolio sets lastRebalance to the creation timestamp, so
+        // executeRebalance's 1-hour cooldown check blocks it right away —
+        // before it even gets to checking balances or drift. Same generic
+        // 500 + {success:false, error} shape every other service-layer
+        // failure in this router uses.
         const createPayload = {
             userAddress: 'GREBALANCE123456789A',
             allocations: { XLM: 60, USDC: 40 },
@@ -276,53 +276,40 @@ describe.skip('Rebalancing - POST /api/portfolio/:id/rebalance', () => {
         const createResponse = await request(app)
             .post('/api/portfolio')
             .send(createPayload)
-            .expect((res) => {
-                expect([200, 201]).toContain(res.status)
-            })
+            .expect(201)
 
-        const portfolioId = createResponse.body.portfolioId
+        const portfolioId = createResponse.body.portfolio.id
         expect(portfolioId).toBeDefined()
 
-        // Now try to rebalance
         const rebalanceResponse = await request(app)
             .post(`/api/portfolio/${portfolioId}/rebalance`)
             .send({})
-            .expect((res) => {
-                expect([200, 201, 400, 409]).toContain(res.status)
-            })
+            .expect(500)
 
-        // Response should contain either status or error
-        expect(
-            rebalanceResponse.body.status ||
-            rebalanceResponse.body.error ||
-            rebalanceResponse.body.reason
-        ).toBeDefined()
+        expect(rebalanceResponse.body.success).toBe(false)
+        expect(rebalanceResponse.body.error).toContain('Cooldown')
     })
 
-    it('should return error for invalid portfolio ID', async () => {
+    it('should return 404 for a nonexistent portfolio ID', async () => {
         const response = await request(app)
             .post('/api/portfolio/invalid-id-xyz-123/rebalance')
             .send({})
-            .expect((res) => {
-                expect([400, 404, 500]).toContain(res.status)
-            })
+            .expect(404)
 
-        expect(response.body.error || response.body.message).toBeDefined()
+        expect(response.body.error).toBe('Portfolio not found')
     })
 
-    it('should require portfolio ID in URL', async () => {
-        const response = await request(app)
+    it('should require a portfolio ID in the URL', async () => {
+        await request(app)
             .post('/api/portfolio//rebalance')
             .send({})
-            .expect((res) => {
-                expect([400, 404]).toContain(res.status)
-            })
+            .expect(404)
     })
 })
 
 // ─── User Portfolios Tests ──────────────────────────────────────────────────
 
-describe.skip('Portfolio Management - GET /api/user/:address/portfolios', () => {
+describe('Portfolio Management - GET /api/user/:address/portfolios', () => {
     it('should return user portfolios for valid address', async () => {
         const userAddress = 'GUSER123456789ABCDEF0'
 
@@ -336,9 +323,7 @@ describe.skip('Portfolio Management - GET /api/user/:address/portfolios', () => 
         await request(app)
             .post('/api/portfolio')
             .send(createPayload)
-            .expect((res) => {
-                expect([200, 201]).toContain(res.status)
-            })
+            .expect(201)
 
         // Now fetch user portfolios
         const response = await request(app)
@@ -347,15 +332,19 @@ describe.skip('Portfolio Management - GET /api/user/:address/portfolios', () => 
 
         expect(Array.isArray(response.body)).toBe(true)
         expect(response.body.length).toBeGreaterThan(0)
+        expect(response.body[0].userAddress).toBe(userAddress)
     })
 
     it('should return empty array for user with no portfolios', async () => {
+        // Deliberately not a well-formed Stellar address either — this
+        // route doesn't validate address format (it's a read, not an
+        // identity-keyed write), a malformed address just matches nothing.
         const response = await request(app)
             .get('/api/user/GNEWUSER123456789ABCDEF/portfolios')
             .expect(200)
 
         expect(Array.isArray(response.body)).toBe(true)
-        expect(response.body).toBeDefined()
+        expect(response.body).toHaveLength(0)
     })
 })
 
