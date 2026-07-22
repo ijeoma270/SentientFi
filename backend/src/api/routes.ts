@@ -18,7 +18,12 @@ import {
   getFeatureFlags,
   getPublicFeatureFlags,
 } from "../config/featureFlags.js";
-import { isValidStellarPublicKey } from "./validation.js";
+import {
+  isValidStellarPublicKey,
+  createPortfolioSchema,
+  rebalancePortfolioSchema,
+} from "./validation.js";
+import { validateRequest } from "../middleware/validate.js";
 import { getPortfolioCheckQueue } from "../queue/queues.js";
 
 const stellarService = new StellarService();
@@ -84,6 +89,128 @@ const parseHistorySource = (
   if (normalized === "onchain") return "onchain";
   return "all";
 };
+
+// ================================
+// PORTFOLIO CRUD ROUTES
+// ================================
+
+// Create a portfolio. userAddress is deliberately not validated as a Stellar
+// address here (see createPortfolioSchema) — the frontend falls back to a
+// "demo-user" identifier when no wallet is connected.
+router.post(
+  "/portfolio",
+  idempotencyMiddleware,
+  validateRequest(createPortfolioSchema),
+  async (req, res) => {
+    try {
+      const { userAddress, allocations, threshold } = req.body;
+
+      const id = portfolioStorage.createPortfolio(
+        userAddress,
+        allocations,
+        threshold,
+      );
+      const portfolio = portfolioStorage.getPortfolio(id);
+
+      res.status(201).json({
+        success: true,
+        portfolio,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("[ERROR] Failed to create portfolio:", error);
+      res.status(500).json({
+        success: false,
+        error: getErrorMessage(error),
+      });
+    }
+  },
+);
+
+// List a user's portfolios. Returns a bare array (not wrapped in an
+// envelope) to match what Dashboard.tsx's fetchPortfolioData expects. Not
+// validating :address as a Stellar public key — this is a read, and an
+// address that happens to be malformed just naturally yields no matches.
+router.get("/user/:address/portfolios", async (req, res) => {
+  try {
+    const { address } = req.params;
+    const portfolios = portfolioStorage.getUserPortfolios(address);
+    res.json(portfolios);
+  } catch (error) {
+    console.error("[ERROR] Failed to fetch user portfolios:", error);
+    res.status(500).json({
+      success: false,
+      error: getErrorMessage(error),
+    });
+  }
+});
+
+// Get a single portfolio, enriched with computed allocations, needsRebalance
+// and dayChange via stellarService.getPortfolio — the same shape Dashboard.tsx
+// already renders for demo data.
+router.get("/portfolio/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const existing = portfolioStorage.getPortfolio(id);
+    if (!existing) {
+      return res.status(404).json({ error: "Portfolio not found" });
+    }
+
+    const portfolio = await stellarService.getPortfolio(id);
+    res.json({ success: true, portfolio });
+  } catch (error) {
+    console.error("[ERROR] Failed to fetch portfolio:", error);
+    res.status(500).json({
+      success: false,
+      error: getErrorMessage(error),
+    });
+  }
+});
+
+// Trigger a rebalance via stellarService.executeRebalance, which already
+// handles the risk checks, cooldown, circuit breakers and DEX execution.
+// Only slippageOverrides is wired through — simulateOnly and
+// ignoreSafetyChecks are accepted by rebalancePortfolioSchema but
+// executeRebalance has no simulate-only or safety-bypass path, so forwarding
+// them would risk a caller thinking they asked for a dry run while a real
+// trade still executes. Leaving those unimplemented rather than silently
+// mishandling them.
+router.post(
+  "/portfolio/:id/rebalance",
+  idempotencyMiddleware,
+  validateRequest(rebalancePortfolioSchema),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      const existing = portfolioStorage.getPortfolio(id);
+      if (!existing) {
+        return res
+          .status(404)
+          .json({ success: false, error: "Portfolio not found" });
+      }
+
+      const slippageOverrides = req.body?.options?.slippageOverrides;
+      const result = await stellarService.executeRebalance(
+        id,
+        slippageOverrides ? { tradeSlippageOverrides: slippageOverrides } : {},
+      );
+
+      res.json({
+        success: true,
+        result,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("[ERROR] Failed to execute rebalance:", error);
+      res.status(500).json({
+        success: false,
+        error: getErrorMessage(error),
+      });
+    }
+  },
+);
 
 router.get("/rebalance/history", async (req, res) => {
   try {
