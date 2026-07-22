@@ -3,6 +3,7 @@ import { rateLimit, type Options } from 'express-rate-limit'
 const windowMs = Number(process.env.RATE_LIMIT_WINDOW_MS) || 60 * 1000
 const max = Number(process.env.RATE_LIMIT_MAX) || 100
 const writeMax = Number(process.env.RATE_LIMIT_WRITE_MAX) || 10
+const portfolioWriteMax = Number(process.env.RATE_LIMIT_PORTFOLIO_WRITE_MAX) || 30
 
 function createHandler(ms: number) {
     const retryAfterSec = Math.ceil(ms / 1000)
@@ -32,5 +33,15 @@ export const globalRateLimiter = rateLimit({
 export const writeRateLimiter = rateLimit({
     ...baseOptions,
     max: writeMax,
+    handler: createHandler(windowMs)
+})
+
+// A separate instance (own counter store, own budget) from writeRateLimiter —
+// portfolio creation and rebalance triggers are their own traffic pattern and
+// shouldn't compete with, or be starved by, unrelated write endpoints sharing
+// the same bucket.
+export const portfolioWriteRateLimiter = rateLimit({
+    ...baseOptions,
+    max: portfolioWriteMax,
     handler: createHandler(windowMs)
 })

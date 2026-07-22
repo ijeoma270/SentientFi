@@ -11,7 +11,10 @@ import { contractEventIndexerService } from "../services/contractEventIndexer.js
 import { logger } from "../utils/logger.js";
 import { idempotencyMiddleware } from "../middleware/idempotency.js";
 import { requireAdmin } from "../middleware/auth.js";
-import { writeRateLimiter } from "../middleware/rateLimit.js";
+import {
+  writeRateLimiter,
+  portfolioWriteRateLimiter,
+} from "../middleware/rateLimit.js";
 import { getQueueMetrics } from "../queue/queueMetrics.js";
 import { blockDebugInProduction } from "../middleware/debugGate.js";
 import {
@@ -99,6 +102,7 @@ const parseHistorySource = (
 // "demo-user" identifier when no wallet is connected.
 router.post(
   "/portfolio",
+  portfolioWriteRateLimiter,
   idempotencyMiddleware,
   validateRequest(createPortfolioSchema),
   async (req, res) => {
@@ -178,6 +182,7 @@ router.get("/portfolio/:id", async (req, res) => {
 // mishandling them.
 router.post(
   "/portfolio/:id/rebalance",
+  portfolioWriteRateLimiter,
   idempotencyMiddleware,
   validateRequest(rebalancePortfolioSchema),
   async (req, res) => {
