@@ -1,4 +1,5 @@
 import { Router, Request, Response } from "express";
+import type { PriceData } from "../types/index.js";
 import { StellarService } from "../services/stellar.js";
 import { ReflectorService } from "../services/reflector.js";
 import { RebalanceHistoryService } from "../services/rebalanceHistory.js";
@@ -451,6 +452,38 @@ router.get("/prices", async (req, res) => {
 
     console.log("[DEBUG] Sending fallback prices:", fallbackPrices);
     res.json(fallbackPrices);
+  }
+});
+
+// Price freshness status - lightweight check for frontend
+router.get("/prices/status", async (req, res) => {
+  try {
+    const prices = await reflectorService.getCurrentPrices();
+    const entries = Object.entries(prices) as [string, PriceData][];
+    const staleCount = entries.filter(([, p]) => p.stale).length;
+    const totalCount = entries.length;
+    const anyStale = staleCount > 0;
+
+    const sources = [...new Set(entries.map(([, p]) => p.source))];
+
+    res.json({
+      success: true,
+      healthy: !anyStale,
+      stale: anyStale,
+      staleAssets: staleCount,
+      totalAssets: totalCount,
+      sources,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("[ERROR] Price status check failed:", error);
+    res.status(500).json({
+      success: false,
+      healthy: false,
+      stale: true,
+      error: "Failed to check price status",
+      timestamp: new Date().toISOString(),
+    });
   }
 });
 
@@ -1493,5 +1526,14 @@ router.get("/queue/health", async (req, res) => {
     });
   }
 });
+
+// Periodic cleanup of stale price cache entries (every 6 hours)
+setInterval(async () => {
+  try {
+    await reflectorService.cleanupStaleCache();
+  } catch (err) {
+    console.error("[CACHE-CLEANUP] Failed:", err);
+  }
+}, 6 * 60 * 60 * 1000);
 
 export { router as portfolioRouter };

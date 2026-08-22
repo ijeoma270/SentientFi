@@ -300,6 +300,7 @@ server.listen(port, async () => {
         console.error('[CHAIN-INDEXER] Failed to start:', error)
     }
 
+
     console.log('Available endpoints:')
     console.log(`  Health: http://localhost:${port}/health`)
     console.log(`  CORS Test: http://localhost:${port}/test/cors`)
