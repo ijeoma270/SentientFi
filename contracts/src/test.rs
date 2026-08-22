@@ -445,3 +445,77 @@ fn test_create_portfolio_threshold_too_high() {
     allocations.set(Address::generate(&env), 100);
     client.create_portfolio(&user, &allocations, &51); // threshold 51 is invalid
 }
+
+#[test]
+fn test_concurrent_portfolio_creation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // Set sequence to a fixed value to simulate same ledger
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 42;
+    });
+
+    let contract_id = env.register_contract(None, PortfolioRebalancer);
+    let client = PortfolioRebalancerClient::new(&env, &contract_id);
+    let reflector_id = env.register_contract(None, reflector_contract::MockReflector);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &reflector_id);
+
+    // Two different users create portfolios in the same ledger
+    let user_a = Address::generate(&env);
+    let user_b = Address::generate(&env);
+
+    let mut allocations_a = Map::new(&env);
+    let asset_a = Address::generate(&env);
+    allocations_a.set(asset_a, 100);
+
+    let mut allocations_b = Map::new(&env);
+    let asset_b = Address::generate(&env);
+    allocations_b.set(asset_b, 100);
+
+    let pid_a = client.create_portfolio(&user_a, &allocations_a, &5);
+    let pid_b = client.create_portfolio(&user_b, &allocations_b, &5);
+
+    // Both portfolios should have different IDs even though created in same ledger
+    assert_ne!(pid_a, pid_b);
+
+    // Both portfolios should be retrievable and belong to their respective users
+    let portfolio_a = client.get_portfolio(&pid_a);
+    let portfolio_b = client.get_portfolio(&pid_b);
+    assert_eq!(portfolio_a.user, user_a);
+    assert_eq!(portfolio_b.user, user_b);
+}
+
+#[test]
+fn test_same_user_two_portfolios() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 100;
+    });
+
+    let contract_id = env.register_contract(None, PortfolioRebalancer);
+    let client = PortfolioRebalancerClient::new(&env, &contract_id);
+    let reflector_id = env.register_contract(None, reflector_contract::MockReflector);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &reflector_id);
+
+    let user = Address::generate(&env);
+
+    let mut allocations_1 = Map::new(&env);
+    let asset1 = Address::generate(&env);
+    allocations_1.set(asset1, 100);
+
+    let mut allocations_2 = Map::new(&env);
+    let asset2 = Address::generate(&env);
+    allocations_2.set(asset2, 100);
+
+    // Same user creates two portfolios
+    let pid_1 = client.create_portfolio(&user, &allocations_1, &5);
+    let pid_2 = client.create_portfolio(&user, &allocations_2, &5);
+
+    // They should have different IDs
+    assert_ne!(pid_1, pid_2);
+}

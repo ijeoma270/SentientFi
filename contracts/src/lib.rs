@@ -40,8 +40,19 @@ impl PortfolioRebalancer {
         if rebalance_threshold < 1 || rebalance_threshold > 50 {
             return Err(Error::InvalidThreshold);
         }
-        
-        let portfolio_id = env.ledger().sequence() as u64; // Convert u32 to u64
+
+        // Generate unique portfolio ID using an incrementing nonce.
+        // This prevents ID collisions when multiple users create portfolios in the same ledger.
+        let count: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::PortfolioCount)
+            .unwrap_or(0);
+        let portfolio_id = count + 1;
+        env.storage()
+            .instance()
+            .set(&DataKey::PortfolioCount, &portfolio_id);
+
         let portfolio = Portfolio {
             user: user.clone(),
             target_allocations,
@@ -51,12 +62,12 @@ impl PortfolioRebalancer {
             total_value: 0,
             is_active: true,
         };
-        
-        env.storage().persistent().set(&DataKey::Portfolio(portfolio_id), &portfolio);
-        env.events().publish(
-            ("portfolio", "created"),
-            (portfolio_id, user)
-        );
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Portfolio(portfolio_id), &portfolio);
+        env.events()
+            .publish(("portfolio", "created"), (portfolio_id, user));
         Ok(portfolio_id)
     }
 

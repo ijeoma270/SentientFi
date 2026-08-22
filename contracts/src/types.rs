@@ -19,6 +19,7 @@ pub enum DataKey {
     ReflectorAddress,
     EmergencyStop,
     Initialized,
+    PortfolioCount,
     Portfolio(u64),
 }
 
