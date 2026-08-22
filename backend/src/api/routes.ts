@@ -191,7 +191,10 @@ router.put(
 
       // Ownership check — the caller must be the portfolio owner
       const callerAddress = req.headers["x-public-key"] as string | undefined;
-      if (callerAddress && existing.userAddress !== callerAddress) {
+      if (!callerAddress) {
+        return res.status(401).json({ error: "X-Public-Key header is required" });
+      }
+      if (existing.userAddress !== callerAddress) {
         return res.status(403).json({ error: "Not authorized to modify this portfolio" });
       }
 
@@ -229,7 +232,10 @@ router.delete(
 
       // Ownership check
       const callerAddress = req.headers["x-public-key"] as string | undefined;
-      if (callerAddress && existing.userAddress !== callerAddress) {
+      if (!callerAddress) {
+        return res.status(401).json({ error: "X-Public-Key header is required" });
+      }
+      if (existing.userAddress !== callerAddress) {
         return res.status(403).json({ error: "Not authorized to delete this portfolio" });
       }
 

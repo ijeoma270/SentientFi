@@ -206,7 +206,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, publicKey }) => {
         try {
             const response = await fetch(`${API_CONFIG.BASE_URL}/api/portfolio/${portfolioData.id}`, {
                 method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Public-Key': publicKey || ''
+                },
                 body: JSON.stringify({ allocations: editAllocations, threshold: editThreshold })
             })
             if (response.ok) {
@@ -229,7 +232,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate, publicKey }) => {
         setDeleteLoading(true)
         try {
             const response = await fetch(`${API_CONFIG.BASE_URL}/api/portfolio/${portfolioData.id}`, {
-                method: 'DELETE'
+                method: 'DELETE',
+                headers: {
+                    'X-Public-Key': publicKey || ''
+                }
             })
             if (response.ok || response.status === 204) {
                 setShowDeleteConfirm(false)
