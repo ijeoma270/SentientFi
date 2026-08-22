@@ -26,6 +26,7 @@ import {
   isValidStellarPublicKey,
   createPortfolioSchema,
   rebalancePortfolioSchema,
+  updatePortfolioSchema,
 } from "./validation.js";
 import { validateRequest } from "../middleware/validate.js";
 import { getPortfolioCheckQueue } from "../queue/queues.js";
@@ -172,6 +173,45 @@ router.get("/portfolio/:id", async (req, res) => {
     });
   }
 });
+
+// Update a portfolio's allocations or threshold. Ownership check ensures
+// only the user who created the portfolio can modify it.
+router.put(
+  "/portfolio/:id",
+  portfolioWriteRateLimiter,
+  validateRequest(updatePortfolioSchema),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      const existing = portfolioStorage.getPortfolio(id);
+      if (!existing) {
+        return res.status(404).json({ error: "Portfolio not found" });
+      }
+
+      // Ownership check — the caller must be the portfolio owner
+      const callerAddress = req.headers["x-public-key"] as string | undefined;
+      if (callerAddress && existing.userAddress !== callerAddress) {
+        return res.status(403).json({ error: "Not authorized to modify this portfolio" });
+      }
+
+      const updates: Record<string, unknown> = {};
+      if (req.body.allocations !== undefined) updates.allocations = req.body.allocations;
+      if (req.body.threshold !== undefined) updates.threshold = req.body.threshold;
+
+      portfolioStorage.updatePortfolio(id, updates);
+
+      const updated = portfolioStorage.getPortfolio(id);
+      res.json({ success: true, portfolio: updated });
+    } catch (error) {
+      console.error("[ERROR] Failed to update portfolio:", error);
+      res.status(500).json({
+        success: false,
+        error: getErrorMessage(error),
+      });
+    }
+  },
+);
 
 // Trigger a rebalance via stellarService.executeRebalance, which already
 // handles the risk checks, cooldown, circuit breakers and DEX execution.
