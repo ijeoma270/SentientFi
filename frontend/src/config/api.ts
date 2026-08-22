@@ -43,6 +43,8 @@ export const API_CONFIG = {
         PORTFOLIO: '/api/portfolio',
         USER_PORTFOLIOS: (address: string) => `/api/user/${address}/portfolios`,
         PORTFOLIO_DETAIL: (id: string) => `/api/portfolio/${id}`,
+        PORTFOLIO_UPDATE: (id: string) => `/api/portfolio/${id}`,
+        PORTFOLIO_DELETE: (id: string) => `/api/portfolio/${id}`,
         PORTFOLIO_REBALANCE: (id: string) => `/api/portfolio/${id}/rebalance`,
         PORTFOLIO_REBALANCE_STATUS: (id: string) => `/api/portfolio/${id}/rebalance-status`,
         PRICES: '/api/prices',
